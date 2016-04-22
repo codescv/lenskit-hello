@@ -12,6 +12,7 @@ dependencies {
     //compile 'org.grouplens.lenskit:lenskit-all:2.2'
     compile project(':lenskit-all')
     runtime 'ch.qos.logback:logback-classic:1.1.2'
+    runtime 'org.fusesource.jansi:jansi:1.8'
 }
 
 build.dependsOn installDist

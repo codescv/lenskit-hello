@@ -32,8 +32,14 @@ import org.grouplens.lenskit.baseline.UserMeanItemScorer;
 import org.grouplens.lenskit.core.LenskitConfiguration;
 import org.grouplens.lenskit.core.LenskitRecommender;
 import org.grouplens.lenskit.data.dao.EventDAO;
+import org.grouplens.lenskit.data.dao.ItemNameDAO;
 import org.grouplens.lenskit.data.dao.SimpleFileRatingDAO;
+import org.grouplens.lenskit.data.history.LikeCountUserHistorySummarizer;
+import org.grouplens.lenskit.data.history.UserHistorySummarizer;
+import org.grouplens.lenskit.data.text.*;
 import org.grouplens.lenskit.knn.item.ItemItemScorer;
+import org.grouplens.lenskit.knn.item.NeighborhoodScorer;
+import org.grouplens.lenskit.knn.item.SimilaritySumNeighborhoodScorer;
 import org.grouplens.lenskit.scored.ScoredId;
 import org.grouplens.lenskit.transform.normalize.BaselineSubtractingUserVectorNormalizer;
 import org.grouplens.lenskit.transform.normalize.UserVectorNormalizer;
@@ -60,37 +66,29 @@ public class HelloLenskit implements Runnable {
         }
     }
 
-    private String delimiter = "\t";
-    private File inputFile = new File("ratings.dat");
     private List<Long> users;
 
     public HelloLenskit(String[] args) {
         int nextArg = 0;
-        boolean done = false;
-        while (!done && nextArg < args.length) {
-            String arg = args[nextArg];
-            if (arg.equals("-d")) {
-                delimiter = args[nextArg + 1];
-                nextArg += 2;
-            } else if (arg.startsWith("-")) {
-                throw new RuntimeException("unknown option: " + arg);
-            } else {
-                inputFile = new File(arg);
-                nextArg += 1;
-                done = true;
-            }
-        }
         users = new ArrayList<Long>(args.length - nextArg);
         for (; nextArg < args.length; nextArg++) {
             users.add(Long.parseLong(args[nextArg]));
         }
+
+        System.out.println("users:" + users);
     }
 
-    public void run() {
-        // We first need to configure the data access.
-        // We will use a simple delimited file; you can use something else like
-        // a database (see JDBCRatingDAO).
-        EventDAO dao = new SimpleFileRatingDAO(inputFile, delimiter);
+
+    private LenskitConfiguration binaryItemCFConfig(String inputFileName) {
+        File inputFile = new File(inputFileName);
+
+        DelimitedColumnEventFormat fmt =
+                DelimitedColumnEventFormat.create(new LikeEventType())
+                        .setDelimiter(",")
+                        .setFields(Fields.user(), Fields.item(),
+                                Fields.timestamp())
+                        .setHeaderLines(1);
+        EventDAO dao = TextEventDAO.create(inputFile, fmt);
 
         // Second step is to create the LensKit configuration...
         LenskitConfiguration config = new LenskitConfiguration();
@@ -99,7 +97,28 @@ public class HelloLenskit implements Runnable {
         // ... and configure the item scorer.  The bind and set methods
         // are what you use to do that. Here, we want an item-item scorer.
         config.bind(ItemScorer.class)
-              .to(ItemItemScorer.class);
+                .to(ItemItemScorer.class);
+
+        config.bind(UserHistorySummarizer.class).to(LikeCountUserHistorySummarizer.class);
+
+        config.bind(NeighborhoodScorer.class).to(SimilaritySumNeighborhoodScorer.class);
+
+        return config;
+    }
+
+    private LenskitConfiguration ratingItemCFConfig(String inputFileName) {
+        File inputFile = new File(inputFileName);
+
+        EventDAO dao = TextEventDAO.create(inputFile, Formats.movieLensLatest());
+
+        // Second step is to create the LensKit configuration...
+        LenskitConfiguration config = new LenskitConfiguration();
+        // ... configure the data source
+        config.addComponent(dao);
+        // ... and configure the item scorer.  The bind and set methods
+        // are what you use to do that. Here, we want an item-item scorer.
+        config.bind(ItemScorer.class)
+                .to(ItemItemScorer.class);
 
         // let's use personalized mean rating as the baseline/fallback predictor.
         // 2-step process:
@@ -112,6 +131,16 @@ public class HelloLenskit implements Runnable {
         // and normalize ratings by baseline prior to computing similarities
         config.bind(UserVectorNormalizer.class)
               .to(BaselineSubtractingUserVectorNormalizer.class);
+
+        return config;
+    }
+
+    public void run() {
+        // We first need to configure the data access.
+        // We will use a simple delimited file; you can use something else like
+        // a database (see JDBCRatingDAO).
+        LenskitConfiguration config = binaryItemCFConfig("data/likes.csv");
+//        LenskitConfiguration config = ratingItemCFConfig("data/ratings.csv");
 
         // There are more parameters, roles, and components that can be set. See the
         // JavaDoc for each recommender algorithm for more information.
@@ -132,7 +161,7 @@ public class HelloLenskit implements Runnable {
         // for users
         for (long user: users) {
             // get 10 recommendation for the user
-            List<ScoredId> recs = irec.recommend(user, 10);
+            List<ScoredId> recs = irec.recommend(user, 20);
             System.out.format("Recommendations for %d:\n", user);
             for (ScoredId item: recs) {
                 System.out.format("\t%d\t%.2f\n", item.getId(), item.getScore());
